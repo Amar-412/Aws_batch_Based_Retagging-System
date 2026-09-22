@@ -1,0 +1,35 @@
+{
+  "name": "s3-batch-retagging-backend",
+  "version": "1.0.0",
+  "description": "Backend API for the S3 Batch Retagging & Policy Management System",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "aws",
+    "s3",
+    "batch-operations",
+    "retagging"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.658.0",
+    "@aws-sdk/client-s3": "^3.658.0",
+    "@aws-sdk/client-s3-control": "^3.658.0",
+    "@aws-sdk/lib-dynamodb": "^3.658.0",
+    "cors": "^2.8.5",
+    "csv-parser": "^3.0.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "multer": "^2.4.0",
+    "uuid": "^11.1.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}
