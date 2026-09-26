@@ -175,3 +175,40 @@ Builds a read-only tag plan from validated objects and saved rules. It reuses th
 Object status is `MATCHED`, `UNCHANGED`, or `CONFLICT`. A conflict lists the tag key and the competing values and does not pick a winner. The summary includes `totalObjects`, `matchedObjects`, `unchangedObjects`, `conflictedObjects`, and `totalTagsToApply`.
 
 An empty object list returns `400` `INVALID_OBJECTS`. An empty rule list returns `400` `INVALID_RULES`.
+
+## Batch Operations
+
+`POST /api/batch/create` accepts a confirmed plan (`confirmed: true`) and creates one S3 Batch Operations job per distinct proposed tag set. The manifest is a headerless `S3BatchOperations_CSV_20180820` file with `Bucket` and `Key` columns. The bucket column is an S3 ARN. Object keys are URL-encoded (`test/atlas-credentials (3).env` becomes `test/atlas-credentials%20(3).env`). Tag values are not written into the manifest.
+
+The job operation is `S3PutObjectTagging`. The backend does not call `PutObjectTagging` on each object. `ConfirmationRequired` is false because the application already required an explicit preview confirmation before this call. The job is not created until the user clicks **Create Batch Operations Job**.
+
+`GET /api/batch/:jobId` calls `DescribeJob` and updates the stored status. Job creation is not task completion.
+
+Conflicts return `400 RETAGGING_CONFLICT` and create no jobs. A missing `BATCH_OPERATIONS_ROLE_ARN` returns `400 BATCH_ROLE_NOT_CONFIGURED`.
+
+### DynamoDB
+
+Table name: `DYNAMODB_TABLE` (default `RetaggingJobs`).
+
+Partition key: `jobId` (String). No sort key.
+
+Each job item stores `jobId`, `workflowId`, `status`, `bucket`, `manifestKey`, `reportPrefix`, `objectCount`, `tagCount`, `tags`, `createdAt`, and `updatedAt`. A second item keyed by `workflow#<workflowId>` records the job IDs so a repeated create request returns the original jobs. AWS credentials are not stored.
+
+### IAM to configure manually
+
+Do not grant `AdministratorAccess` or `s3:*`.
+
+Backend caller:
+
+- `s3:PutObject` on `arn:aws:s3:::<bucket>/manifests/*`
+- `s3:CreateJob` and `s3:DescribeJob` on `arn:aws:s3:<region>:<account>:job/*`
+- `iam:PassRole` on the Batch Operations role ARN
+- `dynamodb:GetItem` and `dynamodb:PutItem` on the `RetaggingJobs` table
+
+Batch Operations role (`BATCH_OPERATIONS_ROLE_ARN`), trusted by `batchoperations.s3.amazonaws.com`:
+
+- `s3:GetObject` and `s3:GetObjectVersion` on the manifest object
+- `s3:PutObjectTagging` and `s3:PutObjectVersionTagging` on the target objects
+- `s3:PutObject` on `arn:aws:s3:::<bucket>/reports/*`
+
+`S3PutObjectTagging` replaces an object's tag set with the tags in that job. Tags that were not part of the proposed set are not preserved, because this step does not read current tags.

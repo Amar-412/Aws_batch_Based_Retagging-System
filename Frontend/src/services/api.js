@@ -43,4 +43,14 @@ export async function generatePreview(objects, rules) {
   return response.data;
 }
 
+export async function createBatchJobs(plan) {
+  const response = await api.post('/batch/create', plan);
+  return response.data;
+}
+
+export async function getBatchJob(jobId) {
+  const response = await api.get(`/batch/${encodeURIComponent(jobId)}`);
+  return response.data;
+}
+
 export default api;

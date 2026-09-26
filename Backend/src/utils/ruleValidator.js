@@ -171,4 +171,41 @@ function normalizeAction(action) {
   };
 }
 
+/**
+ * Validate a proposed tag map before it is sent to S3 Batch Operations.
+ * @param {unknown} tags
+ * @returns {{ valid: boolean, errors: string[], tags?: Record<string, string> }}
+ */
+export function validateTagMap(tags) {
+  if (!tags || typeof tags !== 'object' || Array.isArray(tags)) {
+    return { valid: false, errors: ['Tags must be an object.'] };
+  }
+
+  const entries = Object.entries(tags);
+  if (entries.length === 0) return { valid: false, errors: ['At least one tag is required.'] };
+  if (entries.length > MAX_TAGS) {
+    return { valid: false, errors: [`At most ${MAX_TAGS} tags are allowed.`] };
+  }
+
+  const errors = [];
+  const normalized = {};
+  entries.forEach(([rawKey, rawValue], index) => {
+    const key = typeof rawKey === 'string' ? rawKey.trim() : '';
+    const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+    const label = `Tag ${index + 1}`;
+
+    if (!key) errors.push(`${label} key is empty.`);
+    else errors.push(...tagProblems(`${label} key`, key, MAX_TAG_KEY));
+
+    if (!value) errors.push(`${label} value is empty.`);
+    else errors.push(...tagProblems(`${label} value`, value, MAX_TAG_VALUE));
+
+    if (key && /^aws:/i.test(key)) errors.push(`${label} key cannot start with "aws:".`);
+    if (key) normalized[key] = value;
+  });
+
+  if (errors.length > 0) return { valid: false, errors };
+  return { valid: true, errors: [], tags: normalized };
+}
+
 export { FIELD_OPERATORS };

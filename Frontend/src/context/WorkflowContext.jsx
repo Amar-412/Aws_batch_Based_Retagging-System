@@ -5,6 +5,8 @@ const RULES_KEY = 'retag.rules';
 const PREVIEW_KEY = 'retag.preview';
 const CONFIRMED_KEY = 'retag.previewConfirmed';
 const TIMESTAMP_KEY = 'retag.confirmationTimestamp';
+const WORKFLOW_KEY = 'retag.workflowId';
+const JOBS_KEY = 'retag.batchJobs';
 
 const WorkflowContext = createContext(null);
 
@@ -35,6 +37,8 @@ export function WorkflowProvider({ children }) {
   const [preview, setPreviewState] = useState(() => readJson(PREVIEW_KEY, null));
   const [previewConfirmed, setPreviewConfirmed] = useState(() => sessionStorage.getItem(CONFIRMED_KEY) === 'true');
   const [confirmationTimestamp, setConfirmationTimestamp] = useState(() => sessionStorage.getItem(TIMESTAMP_KEY));
+  const [workflowId, setWorkflowIdState] = useState(() => sessionStorage.getItem(WORKFLOW_KEY) || '');
+  const [batchJobs, setBatchJobsState] = useState(() => readJson(JOBS_KEY, null));
 
   useEffect(() => {
     sessionStorage.setItem(OBJECTS_KEY, JSON.stringify(validatedObjects));
@@ -55,10 +59,22 @@ export function WorkflowProvider({ children }) {
     else sessionStorage.removeItem(TIMESTAMP_KEY);
   }, [previewConfirmed, confirmationTimestamp]);
 
-  function clearConfirmation() {
+  useEffect(() => {
+    if (workflowId) sessionStorage.setItem(WORKFLOW_KEY, workflowId);
+    else sessionStorage.removeItem(WORKFLOW_KEY);
+  }, [workflowId]);
+
+  useEffect(() => {
+    if (batchJobs) sessionStorage.setItem(JOBS_KEY, JSON.stringify(batchJobs));
+    else sessionStorage.removeItem(JOBS_KEY);
+  }, [batchJobs]);
+
+  function clearJobPlan() {
     setPreviewConfirmed(false);
     setConfirmationTimestamp(null);
     setPreviewState(null);
+    setWorkflowIdState('');
+    setBatchJobsState(null);
   }
 
   const value = useMemo(
@@ -66,38 +82,44 @@ export function WorkflowProvider({ children }) {
       validatedObjects,
       setValidatedObjects(next) {
         setValidatedObjectsState(next);
-        clearConfirmation();
+        clearJobPlan();
       },
       rules,
       setRules(next) {
         setRulesState(next);
-        clearConfirmation();
+        clearJobPlan();
       },
       saveRule(rule) {
         setRulesState((current) => {
           const next = current.filter((item) => item.name !== rule.name);
           return [...next, rule];
         });
-        clearConfirmation();
+        clearJobPlan();
       },
       removeRule(name) {
         setRulesState((current) => current.filter((item) => item.name !== name));
-        clearConfirmation();
+        clearJobPlan();
       },
       preview,
       setPreview(next) {
         setPreviewState(next);
         setPreviewConfirmed(false);
         setConfirmationTimestamp(null);
+        setWorkflowIdState('');
+        setBatchJobsState(null);
       },
       previewConfirmed,
       confirmationTimestamp,
+      workflowId,
+      batchJobs,
+      setBatchJobs: setBatchJobsState,
       confirmPreview() {
         setPreviewConfirmed(true);
         setConfirmationTimestamp(new Date().toISOString());
+        setWorkflowIdState((current) => current || crypto.randomUUID());
       },
     }),
-    [validatedObjects, rules, preview, previewConfirmed, confirmationTimestamp]
+    [validatedObjects, rules, preview, previewConfirmed, confirmationTimestamp, workflowId, batchJobs]
   );
 
   return <WorkflowContext.Provider value={value}>{children}</WorkflowContext.Provider>;

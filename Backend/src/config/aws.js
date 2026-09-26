@@ -33,13 +33,17 @@ let _s3ControlClient;
 let _dynamoClient;
 let _dynamoDocClient;
 
-/** Amazon S3 client (object HEAD, manifest upload/read, report read). */
+/**
+ * Amazon S3 client.
+ * Object validation sends HeadObjectCommand.
+ * Manifest upload sends PutObjectCommand.
+ */
 export function getS3Client() {
   if (!_s3Client) _s3Client = new S3Client(buildClientConfig());
   return _s3Client;
 }
 
-/** Amazon S3 Control client (Batch Operations CreateJob / Describe / List). */
+/** Amazon S3 Control client. Batch jobs send CreateJobCommand and DescribeJobCommand. */
 export function getS3ControlClient() {
   if (!_s3ControlClient) _s3ControlClient = new S3ControlClient(buildClientConfig());
   return _s3ControlClient;
@@ -51,7 +55,7 @@ export function getDynamoClient() {
   return _dynamoClient;
 }
 
-/** DynamoDB Document client (marshalls plain JS objects automatically). */
+/** DynamoDB Document client. Job metadata sends PutCommand and GetCommand. */
 export function getDynamoDocClient() {
   if (!_dynamoDocClient) {
     _dynamoDocClient = DynamoDBDocumentClient.from(getDynamoClient(), {
