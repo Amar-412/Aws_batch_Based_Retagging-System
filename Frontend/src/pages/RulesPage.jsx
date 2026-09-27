@@ -1,42 +1,29 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, Check, ChevronDown, Plus, Trash2, X } from 'lucide-react';
+import DataTable from '../components/DataTable';
+import PageHeader from '../components/PageHeader';
+import PrimaryButton from '../components/PrimaryButton';
+import SecondaryButton from '../components/SecondaryButton';
+import StatCard from '../components/StatCard';
+import StatusBadge from '../components/StatusBadge';
+import StepIndicator from '../components/StepIndicator';
+import TagBadge from '../components/TagBadge';
 import { useWorkflow } from '../context/WorkflowContext';
-import {
-  FIELDS,
-  emptyAction,
-  emptyCondition,
-  emptyDraft,
-  operatorsFor,
-  toRule,
-} from '../lib/ruleDraft';
+import { FIELDS, draftFromRule, emptyAction, emptyCondition, emptyDraft, operatorsFor, parseRuleJson, toRule } from '../lib/ruleDraft';
+import { formatTime, readError } from '../lib/format';
 import { evaluateRulesBatch, validateRule } from '../services/api';
-
-const inputClass =
-  'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 transition focus:border-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400';
-
-const buttonClass =
-  'rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-50';
-
-const quietButtonClass =
-  'rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-50';
-
-function readError(err) {
-  const data = err?.response?.data;
-  if (!data) return { message: 'Could not reach the server.', details: [] };
-  const details = data.error?.details;
-  return {
-    message: data.message || 'Request failed.',
-    details: Array.isArray(details) ? details : [],
-  };
-}
 
 export default function RulesPage() {
   const navigate = useNavigate();
   const { validatedObjects, rules, saveRule, removeRule } = useWorkflow();
   const [draft, setDraft] = useState(emptyDraft);
+  const [mode, setMode] = useState('visual');
+  const [jsonText, setJsonText] = useState(() => JSON.stringify(toRule(emptyDraft()), null, 2));
+  const [validatedJson, setValidatedJson] = useState('');
   const [errors, setErrors] = useState([]);
   const [notice, setNotice] = useState('');
+  const [switchError, setSwitchError] = useState('');
+  const [copyNotice, setCopyNotice] = useState('');
   const [busy, setBusy] = useState('');
   const [testResult, setTestResult] = useState(null);
 
@@ -78,7 +65,7 @@ export default function RulesPage() {
       await validateRule(preview);
       setNotice('Rule is valid.');
     } catch (err) {
-      const parsed = readError(err);
+      const parsed = readError(err, 'Rule validation failed.');
       setErrors(parsed.details.length ? parsed.details : [parsed.message]);
     } finally {
       setBusy('');
@@ -91,12 +78,16 @@ export default function RulesPage() {
     setErrors([]);
     try {
       await validateRule(preview);
-      saveRule(preview);
+      saveRule({
+        ...preview,
+        updatedAt: new Date().toISOString(),
+        validationStatus: 'valid',
+      });
       setNotice('Rule saved.');
       setDraft(emptyDraft());
       setTestResult(null);
     } catch (err) {
-      const parsed = readError(err);
+      const parsed = readError(err, 'Could not save the rule.');
       setErrors(parsed.details.length ? parsed.details : [parsed.message]);
     } finally {
       setBusy('');
@@ -115,9 +106,7 @@ export default function RulesPage() {
           draft.actions.some((action) => action.key.trim() || action.value.trim())
       );
       const draftRule = draftStarted ? preview : null;
-      const selected = draftRule
-        ? [...rules.filter((rule) => rule.name !== draftRule.name), draftRule]
-        : rules;
+      const selected = draftRule ? [...rules.filter((rule) => rule.name !== draftRule.name), draftRule] : rules;
       if (selected.length === 0) {
         setErrors(['Save a rule or complete the form before testing.']);
         return;
@@ -135,7 +124,7 @@ export default function RulesPage() {
       );
       setTestResult(response.data);
     } catch (err) {
-      const parsed = readError(err);
+      const parsed = readError(err, 'Could not test the rules.');
       setErrors(parsed.details.length ? parsed.details : [parsed.message]);
       setTestResult(null);
     } finally {
@@ -143,56 +132,242 @@ export default function RulesPage() {
     }
   }
 
+  function showVisual() {
+    if (mode === 'visual') return;
+    const parsed = parseRuleJson(jsonText);
+    if (!parsed.ok) {
+      setSwitchError('Fix the JSON before switching to the visual builder. The current visual rule was kept.');
+      return;
+    }
+    const mapped = draftFromRule(parsed.rule);
+    if (!mapped.ok) {
+      setSwitchError(`${mapped.message} The current visual rule was kept.`);
+      return;
+    }
+    setDraft(mapped.draft);
+    setErrors([]);
+    setNotice('');
+    setSwitchError('');
+    setMode('visual');
+  }
+
+  function showJson() {
+    if (mode === 'json') return;
+    setJsonText(JSON.stringify(toRule(draft), null, 2));
+    setValidatedJson('');
+    setErrors([]);
+    setNotice('');
+    setSwitchError('');
+    setMode('json');
+  }
+
+  function formatJson() {
+    const parsed = parseRuleJson(jsonText);
+    if (!parsed.ok) {
+      setErrors([parsed.message]);
+      setNotice('');
+      return;
+    }
+    const pretty = JSON.stringify(parsed.rule, null, 2);
+    setJsonText(pretty);
+    if (validatedJson) setValidatedJson(pretty);
+    setErrors([]);
+  }
+
+  async function handleValidateJson() {
+    setBusy('validate-json');
+    setNotice('');
+    setErrors([]);
+    const parsed = parseRuleJson(jsonText);
+    if (!parsed.ok) {
+      setValidatedJson('');
+      setErrors([parsed.message]);
+      setBusy('');
+      return;
+    }
+    const mapped = draftFromRule(parsed.rule);
+    if (!mapped.ok) {
+      setValidatedJson('');
+      setErrors([mapped.message]);
+      setBusy('');
+      return;
+    }
+    const rule = toRule(mapped.draft);
+    try {
+      await validateRule(rule);
+      setDraft(mapped.draft);
+      setValidatedJson(jsonText);
+      setNotice('Rule is valid.');
+      setSwitchError('');
+    } catch (err) {
+      setValidatedJson('');
+      const parsedError = readError(err, 'Rule validation failed.');
+      setErrors(parsedError.details.length ? parsedError.details : [parsedError.message]);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function handleSaveJson() {
+    if (!validatedJson || validatedJson !== jsonText) return;
+    setBusy('save-json');
+    setNotice('');
+    setErrors([]);
+    const parsed = parseRuleJson(jsonText);
+    const mapped = parsed.ok ? draftFromRule(parsed.rule) : { ok: false };
+    if (!parsed.ok || !mapped.ok) {
+      setErrors([parsed.message || mapped.message]);
+      setValidatedJson('');
+      setBusy('');
+      return;
+    }
+    const rule = toRule(mapped.draft);
+    try {
+      await validateRule(rule);
+      saveRule({
+        ...rule,
+        updatedAt: new Date().toISOString(),
+        validationStatus: 'valid',
+      });
+      setNotice('Rule saved.');
+      setSwitchError('');
+      const fresh = emptyDraft();
+      setDraft(fresh);
+      setJsonText(JSON.stringify(toRule(fresh), null, 2));
+      setValidatedJson('');
+      setTestResult(null);
+    } catch (err) {
+      const parsedError = readError(err, 'Could not save the rule.');
+      setErrors(parsedError.details.length ? parsedError.details : [parsedError.message]);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  function editRule(rule) {
+    const mapped = draftFromRule(rule);
+    if (!mapped.ok) {
+      setErrors([mapped.message]);
+      return;
+    }
+    setDraft(mapped.draft);
+    setJsonText(JSON.stringify(toRule(mapped.draft), null, 2));
+    setValidatedJson('');
+    setMode('visual');
+    setNotice('');
+    setErrors([]);
+    setSwitchError('');
+  }
+
+  async function testSaved(rule) {
+    if (validatedObjects.length === 0) {
+      setErrors(['No validated objects yet. Validate a CSV on the upload page, then test the rule.']);
+      return;
+    }
+    setBusy('test');
+    setNotice('');
+    setErrors([]);
+    try {
+      const response = await evaluateRulesBatch(
+        validatedObjects.map((object) => ({
+          bucket: object.bucket,
+          key: object.key,
+          size: object.size,
+          lastModified: object.lastModified,
+          contentType: object.contentType,
+        })),
+        [rule]
+      );
+      setTestResult(response.data);
+    } catch (err) {
+      const parsedError = readError(err, 'Could not test the rule.');
+      setErrors(parsedError.details.length ? parsedError.details : [parsedError.message]);
+      setTestResult(null);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function copyJson() {
+    const parsed = parseRuleJson(jsonText);
+    const text = parsed.ok ? JSON.stringify(parsed.rule, null, 2) : jsonText;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyNotice('Copied.');
+    } catch {
+      setCopyNotice('Copy is not available in this browser.');
+    }
+  }
+
+  const parsedJson = parseRuleJson(jsonText);
+  const jsonPreview = parsedJson.ok ? JSON.stringify(parsedJson.rule, null, 2) : '';
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <div>
-            <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">S3 Batch Retagging</p>
-            <h1 className="text-lg font-semibold">Rule Builder</h1>
-          </div>
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">
-            CSV → Rules → Preview → Batch Job
-          </span>
-        </div>
-      </header>
+    <>
+      <PageHeader
+        title="Retagging Rules"
+        description="Build rules that propose tags. Saving and testing a rule does not change Amazon S3."
+      />
+      <StepIndicator current="rules" />
 
-      <main className="mx-auto grid max-w-6xl gap-6 px-4 py-8 lg:grid-cols-[minmax(0,1fr)_280px] sm:px-6">
-        <div className="space-y-6">
-          <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-            <label className="block text-sm font-medium text-slate-700" htmlFor="rule-name">
-              Rule Name
+      <div className="stat-grid" style={{ marginBottom: 16 }}>
+        <StatCard label="Objects" value={validatedObjects.length} tone="beige" />
+        <StatCard label="Rules" value={rules.length} tone="active" />
+        <StatCard
+          label="Conflicts"
+          value={testResult ? testResult.conflicts : '—'}
+          tone={testResult?.conflicts ? 'warning' : 'neutral'}
+          hint={testResult ? 'From the latest test' : 'Test the rules to count conflicts'}
+        />
+      </div>
+
+      <div className="segment" role="tablist" aria-label="Rule editor">
+        <button type="button" role="tab" aria-selected={mode === 'visual'} onClick={showVisual}>
+          Visual Builder
+        </button>
+        <button type="button" role="tab" aria-selected={mode === 'json'} onClick={showJson}>
+          JSON Editor
+        </button>
+      </div>
+      {switchError && <p className="banner banner-danger" role="alert">{switchError}</p>}
+
+      <div className="layout-2">
+        <div className="stack">
+          {mode === 'visual' && <section className="card card-pad">
+            <h2 className="section-title">New rule</h2>
+            <label className="field" htmlFor="rule-name">
+              <span>Rule name</span>
+              <input
+                id="rule-name"
+                className="input"
+                value={draft.name}
+                placeholder="Finance Documents"
+                onChange={(event) => {
+                  setDraft((current) => ({ ...current, name: event.target.value }));
+                  setNotice('');
+                }}
+              />
             </label>
-            <input
-              id="rule-name"
-              className={`${inputClass} mt-2`}
-              value={draft.name}
-              placeholder="Finance Documents"
-              onChange={(event) => {
-                setDraft((current) => ({ ...current, name: event.target.value }));
-                setNotice('');
-              }}
-            />
 
-            <div className="mt-6 flex items-center justify-between gap-3">
-              <h2 className="text-sm font-semibold tracking-wide text-slate-500 uppercase">When</h2>
-              <fieldset className="flex items-center gap-3 text-sm">
+            <div className="rule-card-head" style={{ marginTop: 18 }}>
+              <h3 className="section-title">When</h3>
+              <fieldset className="logic-choice">
                 <legend className="sr-only">Logic</legend>
                 {['AND', 'OR'].map((logic) => (
-                  <label key={logic} className="inline-flex items-center gap-1.5">
+                  <label key={logic}>
                     <input
                       type="radio"
                       name="logic"
                       checked={draft.logic === logic}
                       onChange={() => setDraft((current) => ({ ...current, logic }))}
-                    />
+                    />{' '}
                     {logic}
                   </label>
                 ))}
               </fieldset>
             </div>
 
-            <div className="mt-3 space-y-3">
+            <div className="stack">
               {draft.conditions.map((condition, index) => (
                 <ConditionRow
                   key={condition.id}
@@ -213,166 +388,210 @@ export default function RulesPage() {
               ))}
             </div>
             {conditionErrors.length > 0 && <ErrorList errors={conditionErrors} />}
-            <button
-              type="button"
-              className={`${quietButtonClass} mt-3 inline-flex items-center gap-1`}
-              onClick={() =>
-                setDraft((current) => ({ ...current, conditions: [...current.conditions, emptyCondition()] }))
-              }
+            <SecondaryButton
+              className="btn"
+              onClick={() => setDraft((current) => ({ ...current, conditions: [...current.conditions, emptyCondition()] }))}
             >
-              <Plus className="h-4 w-4" aria-hidden="true" />
               Add Condition
-            </button>
+            </SecondaryButton>
 
-            <h2 className="mt-8 text-sm font-semibold tracking-wide text-slate-500 uppercase">Then</h2>
-            <div className="mt-3 space-y-3">
-              {draft.actions.map((action) => (
-                <div key={action.id} className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <input
-                    className={inputClass}
-                    placeholder="Tag key"
-                    aria-label="Tag key"
-                    value={action.key}
-                    onChange={(event) => updateAction(action.id, { key: event.target.value })}
-                  />
-                  <span className="hidden text-slate-400 sm:block">=</span>
-                  <input
-                    className={inputClass}
-                    placeholder="Tag value"
-                    aria-label="Tag value"
-                    value={action.value}
-                    onChange={(event) => updateAction(action.id, { value: event.target.value })}
-                  />
-                  <button
-                    type="button"
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-                    aria-label="Remove tag"
-                    onClick={() =>
-                      setDraft((current) => ({
-                        ...current,
-                        actions:
-                          current.actions.length === 1
-                            ? current.actions
-                            : current.actions.filter((item) => item.id !== action.id),
-                      }))
-                    }
-                  >
-                    <X className="h-4 w-4" aria-hidden="true" />
-                  </button>
+            <h3 className="section-title" style={{ marginTop: 20 }}>Then apply tags</h3>
+            <div className="stack">
+              {draft.actions.map((action, index) => (
+                <div key={action.id} className="card rule-card">
+                  <div className="rule-card-head">
+                    <strong>Tag {index + 1}</strong>
+                    <button
+                      type="button"
+                      className="btn btn-text"
+                      onClick={() =>
+                        setDraft((current) => ({
+                          ...current,
+                          actions:
+                            current.actions.length === 1
+                              ? current.actions
+                              : current.actions.filter((item) => item.id !== action.id),
+                        }))
+                      }
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div className="form-grid" style={{ marginTop: 12 }}>
+                    <label className="field">
+                      <span>Tag Key</span>
+                      <input
+                        className="input"
+                        aria-label="Tag key"
+                        placeholder="environment"
+                        value={action.key}
+                        onChange={(event) => updateAction(action.id, { key: event.target.value })}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Tag Value</span>
+                      <input
+                        className="input"
+                        aria-label="Tag value"
+                        placeholder="test"
+                        value={action.value}
+                        onChange={(event) => updateAction(action.id, { value: event.target.value })}
+                      />
+                    </label>
+                  </div>
                 </div>
               ))}
             </div>
             {tagErrors.length > 0 && <ErrorList errors={tagErrors} />}
-            <button
-              type="button"
-              className={`${quietButtonClass} mt-3 inline-flex items-center gap-1`}
-              onClick={() => setDraft((current) => ({ ...current, actions: [...current.actions, emptyAction()] }))}
-            >
-              <Plus className="h-4 w-4" aria-hidden="true" />
+            <SecondaryButton onClick={() => setDraft((current) => ({ ...current, actions: [...current.actions, emptyAction()] }))}>
               Add Tag
-            </button>
+            </SecondaryButton>
 
             {otherErrors.length > 0 && <ErrorList errors={otherErrors} />}
             {notice && (
-              <p className="mt-4 flex items-center gap-2 text-sm font-medium text-emerald-700" role="status">
-                <Check className="h-4 w-4" aria-hidden="true" />
+              <p className="banner banner-success" role="status" style={{ marginTop: 16 }}>
                 {notice}
               </p>
             )}
 
-            <div className="mt-6 flex flex-wrap gap-2">
-              <button type="button" className={quietButtonClass} disabled={busy !== ''} onClick={handleValidate}>
-                {busy === 'validate' ? 'Validating...' : 'Validate Rule'}
-              </button>
-              <button type="button" className={buttonClass} disabled={busy !== ''} onClick={handleSave}>
-                {busy === 'save' ? 'Saving...' : 'Save Rule'}
-              </button>
+            <div className="button-row" style={{ marginTop: 16 }}>
+              <SecondaryButton busy={busy === 'validate'} busyLabel="Validating..." disabled={busy !== ''} onClick={handleValidate}>
+                Validate Rule
+              </SecondaryButton>
+              <SecondaryButton busy={busy === 'save'} busyLabel="Saving..." disabled={busy !== ''} onClick={handleSave}>
+                Save Rule
+              </SecondaryButton>
             </div>
-          </section>
+          </section>}
 
-          <details className="rounded-xl border border-slate-200 bg-white shadow-sm">
-            <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-medium">
-              JSON preview
-              <ChevronDown className="h-4 w-4 text-slate-500" aria-hidden="true" />
-            </summary>
-            <pre className="overflow-auto border-t border-slate-200 px-4 py-3 text-xs leading-5 text-slate-700">
-              {JSON.stringify(preview, null, 2)}
-            </pre>
-          </details>
+          {mode === 'json' && (
+            <section className="card card-pad">
+              <h2 className="section-title">JSON rule editor</h2>
+              <p className="muted">
+                Use the existing rule schema: name, logic (AND or OR), conditions with field, operator, and value, and actions with type SET_TAG, key, and value. Fields are key, extension, bucket, size, and lastModified.
+              </p>
+              <label className="field" htmlFor="rule-json">
+                <span>Rule JSON</span>
+                <textarea
+                  id="rule-json"
+                  className="json-editor"
+                  spellCheck="false"
+                  value={jsonText}
+                  onChange={(event) => {
+                    setJsonText(event.target.value);
+                    setValidatedJson('');
+                    setNotice('');
+                    setCopyNotice('');
+                    setSwitchError('');
+                  }}
+                />
+              </label>
+              {errors.length > 0 && <ErrorList errors={errors} />}
+              {notice && <p className="banner banner-success" role="status">{notice}</p>}
+              <div className="button-row" style={{ marginTop: 16 }}>
+                <SecondaryButton disabled={busy !== ''} onClick={formatJson}>Format JSON</SecondaryButton>
+                <SecondaryButton busy={busy === 'validate-json'} busyLabel="Validating..." disabled={busy !== ''} onClick={handleValidateJson}>
+                  Validate JSON
+                </SecondaryButton>
+                <SecondaryButton
+                  busy={busy === 'save-json'}
+                  busyLabel="Saving..."
+                  disabled={busy !== '' || !validatedJson || validatedJson !== jsonText}
+                  onClick={handleSaveJson}
+                >
+                  Save Rule
+                </SecondaryButton>
+              </div>
+              <div className="rule-card-head" style={{ marginTop: 20 }}>
+                <h3 className="section-title">Parsed rule</h3>
+                <SecondaryButton onClick={copyJson}>Copy</SecondaryButton>
+              </div>
+              {copyNotice && <p className="hint" role="status">{copyNotice}</p>}
+              {jsonPreview ? (
+                <pre className="json-preview">{jsonPreview}</pre>
+              ) : (
+                <p className="banner banner-danger" role="alert">JSON is not valid yet. The preview appears after the text parses.</p>
+              )}
+            </section>
+          )}
 
-          <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-            <h2 className="text-sm font-semibold">Test Rule Against Objects</h2>
-            <p className="mt-1 text-sm text-slate-600">
+          {mode === 'visual' && <details className="card">
+            <summary>JSON preview</summary>
+            <pre className="json-preview">{JSON.stringify(preview, null, 2)}            </pre>
+          </details>}
+
+          <section className="card card-pad">
+            <h2 className="section-title">Test rules against objects</h2>
+            <p className="muted">
               {validatedObjects.length} validated object{validatedObjects.length === 1 ? '' : 's'} from the upload step.
               Testing does not change Amazon S3.
             </p>
             {validatedObjects.length === 0 && (
-              <p className="mt-3 text-sm text-amber-800">
-                No validated objects yet. Validate a CSV on the upload page, then continue here with the valid objects.
-              </p>
+              <p className="banner banner-warning">No validated objects yet. Validate a CSV on the upload page, then continue here.</p>
             )}
-            <button
-              type="button"
-              className={`${buttonClass} mt-4`}
+            <SecondaryButton
+              busy={busy === 'test'}
+              busyLabel="Testing..."
               disabled={busy !== '' || validatedObjects.length === 0}
               onClick={handleTest}
             >
-              {busy === 'test' ? 'Testing...' : 'Test Rule'}
-            </button>
-
+              Test Rule
+            </SecondaryButton>
             {testResult && <TestResults result={testResult} />}
           </section>
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className={buttonClass}
-              disabled={rules.length === 0 || !testResult}
-              onClick={() => navigate('/preview')}
-            >
-              Continue to Preview
-            </button>
-            <p className="self-center text-xs text-slate-500">
+          <div className="button-row">
+            <PrimaryButton disabled={rules.length === 0 || !testResult} onClick={() => navigate('/preview')}>
+              Continue to Preview →
+            </PrimaryButton>
+            <p className="hint">
               {rules.length === 0 || !testResult ? 'Save and test a rule before continuing.' : 'Preview is the next step.'}
             </p>
           </div>
         </div>
 
-        <aside className="h-fit rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-semibold">Saved rules</h2>
+        <aside className="stack">
+          <h2 className="section-title">Saved rules</h2>
           {rules.length === 0 ? (
-            <p className="mt-2 text-sm text-slate-500">No rules saved yet.</p>
+            <p className="card card-pad muted">No rules saved yet.</p>
           ) : (
-            <ul className="mt-3 space-y-2">
-              {rules.map((rule) => (
-                <li key={rule.name} className="rounded-lg border border-slate-200 px-3 py-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-medium">{rule.name}</p>
-                      <p className="text-xs text-slate-500">
-                        {rule.logic} · {rule.conditions.length} condition{rule.conditions.length === 1 ? '' : 's'} ·{' '}
-                        {rule.actions.length} tag{rule.actions.length === 1 ? '' : 's'}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      className="rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                      aria-label={`Remove ${rule.name}`}
-                      onClick={() => {
-                        removeRule(rule.name);
-                        setTestResult(null);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
+            rules.map((rule, index) => (
+              <article key={rule.name} className="card rule-card">
+                <div className="rule-card-head">
+                  <strong>{rule.name || `Rule ${index + 1}`}</strong>
+                  <button
+                    type="button"
+                    className="btn btn-text"
+                    aria-label={`Remove ${rule.name}`}
+                    onClick={() => {
+                      removeRule(rule.name);
+                      setTestResult(null);
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+                <p className="hint">{rule.logic} · {rule.conditions.length} condition{rule.conditions.length === 1 ? '' : 's'}</p>
+                <p className="hint">{rule.actions.length} tag{rule.actions.length === 1 ? '' : 's'}</p>
+                <p className="hint">Updated {formatTime(rule.updatedAt)}</p>
+                <p className="hint">Validation: {rule.validationStatus === 'valid' ? 'Valid' : 'Not checked'}</p>
+                <div className="stack" style={{ marginTop: 12 }}>
+                  {rule.actions.map((action) => (
+                    <TagBadge key={`${action.key}-${action.value}`} tags={{ [action.key]: action.value }} />
+                  ))}
+                </div>
+                <div className="button-row" style={{ marginTop: 12 }}>
+                  <SecondaryButton onClick={() => editRule(rule)}>Edit</SecondaryButton>
+                  <SecondaryButton busy={busy === 'test'} busyLabel="Testing..." disabled={busy !== ''} onClick={() => testSaved(rule)}>
+                    Test
+                  </SecondaryButton>
+                </div>
+              </article>
+            ))
           )}
         </aside>
-      </main>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -381,60 +600,42 @@ function ConditionRow({ condition, showLogic, logic, onChange, onRemove }) {
   const kind = FIELDS.find((field) => field.id === condition.field)?.kind;
 
   return (
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-      {showLogic && <span className="w-10 text-xs font-medium text-slate-400">{logic}</span>}
-      <select
-        className={inputClass}
-        aria-label="Field"
-        value={condition.field}
-        onChange={(event) => onChange({ field: event.target.value })}
-      >
+    <div className="inline-fields">
+      {showLogic ? <span className="muted">{logic}</span> : <span />}
+      <select className="select" aria-label="Field" value={condition.field} onChange={(event) => onChange({ field: event.target.value })}>
+        {!FIELDS.some((field) => field.id === condition.field) && (
+          <option value={condition.field}>{condition.field}</option>
+        )}
         {FIELDS.map((field) => (
-          <option key={field.id} value={field.id}>
-            {field.label}
-          </option>
+          <option key={field.id} value={field.id}>{field.label}</option>
         ))}
       </select>
-      <select
-        className={inputClass}
-        aria-label="Operator"
-        value={condition.operator}
-        onChange={(event) => onChange({ operator: event.target.value })}
-      >
+      <select className="select" aria-label="Operator" value={condition.operator} onChange={(event) => onChange({ operator: event.target.value })}>
+        {!operators.some((operator) => operator.id === condition.operator) && (
+          <option value={condition.operator}>{condition.operator}</option>
+        )}
         {operators.map((operator) => (
-          <option key={operator.id} value={operator.id}>
-            {operator.label}
-          </option>
+          <option key={operator.id} value={operator.id}>{operator.label}</option>
         ))}
       </select>
       <input
-        className={inputClass}
+        className="input"
         aria-label="Condition value"
         type={kind === 'number' ? 'number' : kind === 'date' ? 'datetime-local' : 'text'}
         placeholder={condition.field === 'extension' ? '.pdf' : 'Value'}
         value={condition.value}
         onChange={(event) => onChange({ value: event.target.value })}
       />
-      <button
-        type="button"
-        className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-        aria-label="Remove condition"
-        onClick={onRemove}
-      >
-        <X className="h-4 w-4" aria-hidden="true" />
-      </button>
+      <button type="button" className="btn btn-text" onClick={onRemove}>Remove</button>
     </div>
   );
 }
 
 function ErrorList({ errors }) {
   return (
-    <ul className="mt-3 space-y-1 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
+    <ul className="banner banner-danger" role="alert">
       {errors.map((error) => (
-        <li key={error} className="flex items-start gap-2">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          {error}
-        </li>
+        <li key={error}>{error}</li>
       ))}
     </ul>
   );
@@ -442,76 +643,37 @@ function ErrorList({ errors }) {
 
 function TestResults({ result }) {
   return (
-    <div className="mt-4">
-      <div className="grid gap-3 sm:grid-cols-4">
-        <Mini label="Total" value={result.total} />
-        <Mini label="Matched" value={result.matched} />
-        <Mini label="Unmatched" value={result.unmatched} />
-        <Mini label="Conflicts" value={result.conflicts} />
+    <div className="stack" style={{ marginTop: 16 }}>
+      <div className="stat-grid">
+        <StatCard label="Total" value={result.total} />
+        <StatCard label="Matched" value={result.matched} tone="success" />
+        <StatCard label="Unmatched" value={result.unmatched} />
+        <StatCard label="Conflicts" value={result.conflicts} tone={result.conflicts ? 'warning' : 'neutral'} />
       </div>
-      <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
-        <div className="max-h-80 overflow-auto">
-          <table className="min-w-full text-left text-sm">
-            <thead className="sticky top-0 bg-slate-50 text-xs tracking-wide text-slate-500 uppercase">
-              <tr>
-                <th className="px-4 py-3 font-medium">Object</th>
-                <th className="px-4 py-3 font-medium">Rules</th>
-                <th className="px-4 py-3 font-medium">Tags</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.results.map((row) => (
-                <tr key={`${row.bucket}/${row.key}`} className="border-t border-slate-100">
-                  <td className="px-4 py-3 font-mono text-xs">{row.key}</td>
-                  <td className="px-4 py-3 text-slate-700">
-                    {row.matchedRules.length ? row.matchedRules.join(', ') : '-'}
-                  </td>
-                  <td className="px-4 py-3 text-slate-700">
-                    {Object.keys(row.tags).length
-                      ? Object.entries(row.tags)
-                          .map(([key, value]) => `${key}=${value}`)
-                          .join(', ')
-                      : '-'}
-                    {row.conflicts?.length > 0 && (
-                      <p className="mt-1 text-xs text-amber-800">
-                        {row.conflicts
-                          .map((conflict) => `${conflict.tag}: ${conflict.values.join(' or ')}`)
-                          .join('; ')}
-                      </p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={row.status} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StatusBadge({ status }) {
-  const styles = {
-    MATCH: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-    NO_MATCH: 'bg-slate-100 text-slate-600 ring-slate-200',
-    CONFLICT: 'bg-amber-50 text-amber-800 ring-amber-200',
-  };
-  return (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${styles[status] || styles.NO_MATCH}`}>
-      {status === 'MATCH' ? 'MATCH' : status === 'CONFLICT' ? 'CONFLICT' : 'NO MATCH'}
-    </span>
-  );
-}
-
-function Mini({ label, value }) {
-  return (
-    <div className="rounded-xl border border-slate-200 px-3 py-2">
-      <p className="text-xs text-slate-500">{label}</p>
-      <p className="text-xl font-semibold">{value}</p>
+      <DataTable
+        rows={result.results}
+        getRowKey={(row) => `${row.bucket}/${row.key}`}
+        getRowClassName={(row) => (row.status === 'CONFLICT' ? 'row-warning' : '')}
+        columns={[
+          { key: 'object', header: 'Object', cell: (row) => <span className="mono">{row.key}</span> },
+          { key: 'rules', header: 'Rules', cell: (row) => (row.matchedRules.length ? row.matchedRules.join(', ') : '—') },
+          {
+            key: 'tags',
+            header: 'Tags',
+            cell: (row) => (
+              <div>
+                <TagBadge tags={row.tags} />
+                {row.conflicts?.length > 0 && (
+                  <p className="hint">
+                    {row.conflicts.map((conflict) => `${conflict.tag}: ${conflict.values.join(' or ')}`).join('; ')}
+                  </p>
+                )}
+              </div>
+            ),
+          },
+          { key: 'status', header: 'Status', cell: (row) => <StatusBadge status={row.status} /> },
+        ]}
+      />
     </div>
   );
 }

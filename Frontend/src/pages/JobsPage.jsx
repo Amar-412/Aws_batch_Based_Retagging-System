@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import DataTable from '../components/DataTable';
+import EmptyState from '../components/EmptyState';
+import ErrorState from '../components/ErrorState';
+import LoadingState from '../components/LoadingState';
+import PageHeader from '../components/PageHeader';
+import PrimaryButton from '../components/PrimaryButton';
+import SecondaryButton from '../components/SecondaryButton';
+import StatusBadge from '../components/StatusBadge';
+import TagBadge from '../components/TagBadge';
+import { formatTime, readError } from '../lib/format';
 import { listBatchJobs } from '../services/api';
-
-const quietButtonClass =
-  'inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-50';
-
-const buttonClass =
-  'rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-50';
 
 const PAGE_SIZE = 20;
 
@@ -18,31 +22,6 @@ const STATUS_OPTIONS = [
   { value: 'FAILED', label: 'Failed' },
   { value: 'CANCELLED', label: 'Cancelled' },
 ];
-
-function readError(err) {
-  const data = err?.response?.data;
-  if (!data) return 'Could not reach the server.';
-  return data.message || 'Could not load job history.';
-}
-
-function formatTime(value) {
-  if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
-}
-
-function badgeFor(status) {
-  const value = String(status || '').toLowerCase();
-  if (value === 'new') return { label: 'NEW', className: 'bg-slate-100 text-slate-700 ring-slate-200' };
-  if (value === 'active') return { label: 'ACTIVE', className: 'bg-sky-50 text-sky-800 ring-sky-200' };
-  if (value === 'complete') return { label: 'COMPLETE', className: 'bg-emerald-50 text-emerald-700 ring-emerald-200' };
-  if (value === 'failed' || value === 'failing') return { label: 'FAILED', className: 'bg-red-50 text-red-800 ring-red-200' };
-  if (value === 'cancelled' || value === 'canceled' || value === 'cancelling') {
-    return { label: 'CANCELLED', className: 'bg-amber-50 text-amber-800 ring-amber-200' };
-  }
-  return { label: status || 'UNKNOWN', className: 'bg-slate-100 text-slate-700 ring-slate-200' };
-}
 
 export default function JobsPage() {
   const navigate = useNavigate();
@@ -76,7 +55,7 @@ export default function JobsPage() {
         if (!cancelled) {
           setJobs([]);
           setNextCursor(null);
-          setError(readError(err));
+          setError(readError(err, 'Could not load job history.').message);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -103,7 +82,7 @@ export default function JobsPage() {
   }
 
   function nextPage() {
-    if (!nextCursor) return;
+    if (!nextCursor || loading) return;
     setCursorStack((current) => {
       const copy = current.slice(0, pageIndex + 1);
       copy.push(nextCursor);
@@ -113,128 +92,75 @@ export default function JobsPage() {
   }
 
   function previousPage() {
-    if (pageIndex === 0) return;
+    if (pageIndex === 0 || loading) return;
     setPageIndex((current) => current - 1);
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <div>
-            <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">S3 Batch Retagging</p>
-            <h1 className="text-lg font-semibold">Job History</h1>
-          </div>
-          <Link to="/batch-job" className={quietButtonClass}>
-            Back to Batch Job
-          </Link>
-        </div>
-      </header>
+    <>
+      <PageHeader
+        title="Job History"
+        description="Previously created retagging jobs. Opening a job shows its status and does not create another one."
+      />
 
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        <p className="max-w-2xl text-sm leading-6 text-slate-600">
-          Previously created retagging jobs. Opening a job shows its status and does not create another one.
-        </p>
+      <form className="filter-bar" onSubmit={applySearch}>
+        <label className="field">
+          <span>Search by Job ID</span>
+          <input className="input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by job ID" />
+        </label>
+        <label className="field">
+          <span>Status</span>
+          <select className="select" value={status} onChange={changeStatus}>
+            {STATUS_OPTIONS.map((option) => (
+              <option key={option.value || 'all'} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <PrimaryButton type="submit">Search</PrimaryButton>
+      </form>
 
-        <form className="mt-6 flex flex-wrap items-end gap-3" onSubmit={applySearch}>
-          <label className="block text-sm">
-            <span className="text-xs font-medium text-slate-500">Job ID</span>
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search by job ID"
-              className="mt-1 block w-64 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="text-xs font-medium text-slate-500">Status</span>
-            <select
-              value={status}
-              onChange={changeStatus}
-              className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-            >
-              {STATUS_OPTIONS.map((option) => (
-                <option key={option.value || 'all'} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button type="submit" className={buttonClass}>
-            Search
-          </button>
-        </form>
-
-        {loading && (
-          <p className="mt-4 text-sm text-slate-600" role="status">
-            Loading job history...
-          </p>
-        )}
+      <div className="stack" style={{ marginTop: 16 }}>
+        {loading && <LoadingState label="Loading job history" />}
         {error && (
-          <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
-            {error}
-          </p>
+          <ErrorState
+            title="Unable to load job history"
+            message={error}
+            onRetry={() => {
+              setCursorStack([null]);
+              setPageIndex(0);
+            }}
+          />
         )}
-
         {!loading && !error && jobs.length === 0 && (
-          <p className="mt-6 rounded-xl border border-slate-200 bg-white px-4 py-6 text-sm text-slate-600">
-            No retagging jobs found.
-          </p>
+          <EmptyState title="No retagging jobs found" message="Try another job ID or status, or start a new retagging workflow." />
         )}
-
         {jobs.length > 0 && (
-          <section className="mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="overflow-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead className="bg-slate-50 text-xs tracking-wide text-slate-500 uppercase">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">Job ID</th>
-                    <th className="px-4 py-3 font-medium">Created</th>
-                    <th className="px-4 py-3 font-medium">Objects</th>
-                    <th className="px-4 py-3 font-medium">Successful</th>
-                    <th className="px-4 py-3 font-medium">Failed</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
-                    <th className="px-4 py-3 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {jobs.map((job) => {
-                    const badge = badgeFor(job.status);
-                    return (
-                      <tr key={job.jobId} className="border-t border-slate-100">
-                        <td className="px-4 py-3 font-mono text-xs">{job.jobId}</td>
-                        <td className="px-4 py-3 text-slate-700">{formatTime(job.createdAt)}</td>
-                        <td className="px-4 py-3">{job.objectCount ?? '—'}</td>
-                        <td className="px-4 py-3">{job.tasksSucceeded ?? '—'}</td>
-                        <td className="px-4 py-3">{job.tasksFailed ?? '—'}</td>
-                        <td className="px-4 py-3">
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${badge.className}`}>
-                            {badge.label}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <button type="button" className={quietButtonClass} onClick={() => navigate(`/job/${job.jobId}`)}>
-                            View
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
+          <DataTable
+            rows={jobs}
+            getRowKey={(job) => job.jobId}
+            columns={[
+              { key: 'id', header: 'Job ID', cell: (job) => <span className="mono">{job.jobId}</span> },
+              { key: 'status', header: 'Status', cell: (job) => <StatusBadge status={job.status} /> },
+              { key: 'objects', header: 'Objects', cell: (job) => job.objectCount ?? '—' },
+              { key: 'ok', header: 'Successful', cell: (job) => job.tasksSucceeded ?? '—' },
+              { key: 'bad', header: 'Failed', cell: (job) => job.tasksFailed ?? '—' },
+              { key: 'tags', header: 'Tags', cell: (job) => <TagBadge tags={job.tags} /> },
+              { key: 'created', header: 'Created', cell: (job) => formatTime(job.createdAt) },
+              { key: 'updated', header: 'Updated', cell: (job) => formatTime(job.updatedAt) },
+              {
+                key: 'action',
+                header: 'Action',
+                cell: (job) => <SecondaryButton onClick={() => navigate(`/job/${job.jobId}`)}>View</SecondaryButton>,
+              },
+            ]}
+          />
         )}
-
-        <div className="mt-4 flex items-center gap-2">
-          <button type="button" className={quietButtonClass} disabled={pageIndex === 0 || loading} onClick={previousPage}>
-            Previous
-          </button>
-          <button type="button" className={quietButtonClass} disabled={!nextCursor || loading} onClick={nextPage}>
-            Next
-          </button>
+        <div className="pager">
+          <SecondaryButton disabled={pageIndex === 0 || loading} onClick={previousPage}>Previous</SecondaryButton>
+          <span className="muted">Page {pageIndex + 1}</span>
+          <SecondaryButton disabled={!nextCursor || loading} onClick={nextPage}>Next</SecondaryButton>
         </div>
-      </main>
-    </div>
+      </div>
+    </>
   );
 }

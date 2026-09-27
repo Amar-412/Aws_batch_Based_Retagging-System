@@ -1,14 +1,20 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, Download, RefreshCw, X } from 'lucide-react';
+import DataTable from '../components/DataTable';
+import ErrorState from '../components/ErrorState';
+import JobStatusTimeline from '../components/JobStatusTimeline';
+import LoadingState from '../components/LoadingState';
+import PageHeader from '../components/PageHeader';
+import SecondaryButton from '../components/SecondaryButton';
+import StatCard from '../components/StatCard';
+import StatusBadge from '../components/StatusBadge';
+import TagBadge from '../components/TagBadge';
+import { formatTime } from '../lib/format';
 import { downloadBatchReport, getBatchJob } from '../services/api';
 
 const TERMINAL = new Set(['Complete', 'Failed', 'Cancelled', 'Canceled']);
 const POLL_MS = 10000;
 const REPORT_RETRIES = 3;
-
-const quietButtonClass =
-  'inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-50';
 
 function readError(err) {
   const data = err?.response?.data;
@@ -16,24 +22,12 @@ function readError(err) {
   return data.message || 'Could not load the job.';
 }
 
-function formatTags(tags) {
-  const entries = Object.entries(tags || {});
-  if (entries.length === 0) return '—';
-  return entries.map(([key, value]) => `${key} = ${value}`).join(', ');
-}
-
-function formatTime(value) {
-  if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
-}
-
 export default function JobStatusPage() {
   const { jobId } = useParams();
   const [job, setJob] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState('');
   const [downloadError, setDownloadError] = useState('');
 
@@ -73,8 +67,6 @@ export default function JobStatusPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-    // Polling stays inside this effect. Refresh calls the same loader through a new mount only when jobId changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId]);
 
   async function refresh() {
@@ -91,11 +83,15 @@ export default function JobStatusPage() {
   }
 
   async function downloadReport() {
+    if (downloading) return;
+    setDownloading(true);
     setDownloadError('');
     try {
       await downloadBatchReport(jobId);
     } catch (err) {
       setDownloadError(readError(err));
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -108,188 +104,137 @@ export default function JobStatusPage() {
         succeeded: progress?.numberOfTasksSucceeded ?? summary?.succeeded ?? 0,
         failed: progress?.numberOfTasksFailed ?? summary?.failed ?? 0,
       };
+  const finished = job ? TERMINAL.has(job.status) : false;
+  const accounted = Number(counts.succeeded || 0) + Number(counts.failed || 0);
+  const percent = counts.total > 0 ? Math.min(100, Math.round((accounted / counts.total) * 100)) : finished ? 100 : 0;
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto max-w-6xl px-4 py-4 sm:px-6">
-          <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">S3 Batch Retagging</p>
-          <h1 className="text-lg font-semibold">Job Status</h1>
-        </div>
-      </header>
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        <p className="max-w-2xl text-sm leading-6 text-slate-600">
-          Task results come from the S3 Batch Operations completion report. Requested tags are not proof that an
-          object was tagged.
-        </p>
+    <>
+      <PageHeader
+        title="Job Status"
+        description="Task results come from the S3 Batch Operations completion report. Requested tags are not proof that an object was tagged."
+        actions={job ? <StatusBadge status={job.status} /> : null}
+      />
 
-        {loading && !job && (
-          <p className="mt-4 text-sm text-slate-600" role="status">
-            Loading job status...
-          </p>
-        )}
-        {error && (
-          <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
-            {error}
-          </p>
-        )}
+      {loading && !job && <LoadingState label="Loading job status" />}
+      {error && (
+        <ErrorState
+          title="Unable to load job"
+          message={error}
+          onRetry={refresh}
+        />
+      )}
 
-        {job && (
-          <>
-            <section className="mt-6 rounded-xl border border-slate-200 bg-white px-6 py-6 shadow-sm">
-              <h2 className="text-base font-semibold">Summary</h2>
-              <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <Field label="Job ID" value={job.jobId} mono />
-                <Field label="Overall status" value={job.status} />
-                <Field label="Objects processed" value={String(counts.total)} />
-                <Field label="Tasks succeeded" value={String(counts.succeeded)} />
-                <Field label="Tasks failed" value={String(counts.failed)} />
-                <Field label="Tags requested" value={formatTags(job.tags)} />
-                <Field label="Created" value={formatTime(job.creationTime || job.createdAt)} />
-                <Field label="Updated" value={formatTime(job.updatedAt || job.terminationDate)} />
-              </dl>
-              {!summary?.fromReport && !TERMINAL.has(job.status) && (
-                <p className="mt-4 text-sm text-slate-600" role="status">
-                  {refreshing ? 'Refreshing job status...' : 'This job is still running. Status refreshes automatically.'}
-                </p>
-              )}
-            </section>
-
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <Card label="Total" value={counts.total} />
-              <Card label="Successful" value={counts.succeeded} tone="success" />
-              <Card label="Failed" value={counts.failed} tone={counts.failed > 0 ? 'failure' : 'neutral'} />
+      {job && (
+        <div className="stack">
+          <section className="card card-pad">
+            <p className="label">Job ID</p>
+            <p className="mono">{job.jobId}</p>
+            <div style={{ marginTop: 16 }}>
+              <JobStatusTimeline status={job.status} created />
             </div>
-
-            <section className="mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-              <div className="border-b border-slate-200 px-4 py-3">
-                <h2 className="text-base font-semibold">Retagging Results</h2>
-              </div>
-              {job.results?.length > 0 ? (
-                <div className="max-h-[32rem] overflow-auto">
-                  <table className="min-w-full text-left text-sm">
-                    <thead className="sticky top-0 bg-slate-50 text-xs tracking-wide text-slate-500 uppercase">
-                      <tr>
-                        <th className="px-4 py-3 font-medium">Object</th>
-                        <th className="px-4 py-3 font-medium">Status</th>
-                        <th className="px-4 py-3 font-medium">HTTP Status</th>
-                        <th className="px-4 py-3 font-medium">Applied/Actual Tags</th>
-                        <th className="px-4 py-3 font-medium">Message</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {job.results.map((row) => (
-                        <ResultRow key={`${row.bucket}/${row.key}/${row.taskStatus}`} row={row} requestedTags={job.tags} />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="px-4 py-6 text-sm text-slate-600">
-                  {job.report?.message || 'Object results appear here after the completion report is available.'}
-                </p>
-              )}
-            </section>
-
-            <section className="mt-6 rounded-xl border border-slate-200 bg-white px-6 py-6 shadow-sm">
-              <h2 className="text-base font-semibold">Batch Operations Report</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                {job.report?.available
-                  ? 'The completion report lists each task. Download does not include AWS credentials.'
-                  : job.report?.message || 'The completion report is not available yet.'}
+            <dl className="kv">
+              <div><dt>Created</dt><dd>{formatTime(job.creationTime || job.createdAt)}</dd></div>
+              <div><dt>Updated</dt><dd>{formatTime(job.updatedAt || job.terminationDate)}</dd></div>
+              <div><dt>Requested tags</dt><dd><TagBadge tags={job.tags} /></dd></div>
+            </dl>
+            {!summary?.fromReport && !finished && (
+              <p className="banner banner-info" role="status">
+                {refreshing ? 'Refreshing job status...' : 'Batch Operations job is currently running. Status refreshes automatically.'}
               </p>
-              {job.report?.manifestKey && (
-                <p className="mt-2 font-mono text-xs break-all text-slate-500">{job.report.manifestKey}</p>
-              )}
-              {downloadError && (
-                <p className="mt-3 text-sm text-red-800" role="alert">
-                  {downloadError}
-                </p>
-              )}
-              {job.report?.available && (
-                <button type="button" className={`${quietButtonClass} mt-4`} onClick={downloadReport}>
-                  <Download className="h-4 w-4" aria-hidden="true" />
-                  Download Report
-                </button>
-              )}
-            </section>
-          </>
-        )}
+            )}
+          </section>
 
-        <div className="mt-6 flex flex-wrap gap-2">
-          <button type="button" className={quietButtonClass} disabled={loading || refreshing} onClick={refresh}>
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
-            Refresh status
-          </button>
-          <Link to="/batch-job" className={quietButtonClass}>
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            Back to Batch Job
-          </Link>
-          <Link to="/jobs" className={quietButtonClass}>
-            Job History
-          </Link>
+          <div className="stat-grid">
+            <StatCard label="Total" value={counts.total} />
+            <StatCard label="Successful" value={counts.succeeded} tone="success" />
+            <StatCard label="Failed" value={counts.failed} tone={counts.failed > 0 ? 'failed' : 'neutral'} />
+          </div>
+
+          <section className="card card-pad">
+            <div className="progress-meta">
+              <span>{summary?.fromReport ? 'Reported tasks' : 'Progress'}</span>
+              <span>{percent}%</span>
+            </div>
+            <div className="progress" role="progressbar" aria-valuenow={percent} aria-valuemin="0" aria-valuemax="100" aria-label="Job progress">
+              <div className="progress-bar" style={{ width: `${percent}%` }} />
+            </div>
+          </section>
+
+          <section className="stack">
+            <h2 className="section-title">Retagging Results</h2>
+            {job.results?.length > 0 ? (
+              <DataTable
+                rows={job.results}
+                getRowKey={(row) => `${row.bucket}/${row.key}/${row.taskStatus}`}
+                getRowClassName={(row) => (row.taskStatus === 'succeeded' ? '' : 'row-failed')}
+                columns={[
+                  { key: 'status', header: 'Status', cell: (row) => <ResultStatus row={row} /> },
+                  { key: 'object', header: 'Object', cell: (row) => <span className="mono">{row.key}</span> },
+                  { key: 'http', header: 'HTTP Status', cell: (row) => row.httpStatusCode || '—' },
+                  { key: 'requested', header: 'Requested Tags', cell: () => <TagBadge tags={job.tags} /> },
+                  {
+                    key: 'actual',
+                    header: 'Actual S3 Tags',
+                    cell: (row) => <ActualTags row={row} />,
+                  },
+                  {
+                    key: 'message',
+                    header: 'Message',
+                    cell: (row) => (row.taskStatus === 'succeeded' ? row.resultMessage || 'Successful' : row.resultMessage || 'Failed'),
+                  },
+                ]}
+              />
+            ) : (
+              <div className={`banner ${finished ? 'banner-warning' : 'banner-info'}`}>
+                {finished
+                  ? job.report?.message || 'Completion report is not available yet.'
+                  : 'Batch Operations job is currently running. Results appear after it finishes.'}
+              </div>
+            )}
+          </section>
+
+          <section className="card card-pad">
+            <h2 className="section-title">Batch Operations Report</h2>
+            {job.report?.available ? (
+              <p className="muted">The completion report lists each task. Download does not include AWS credentials.</p>
+            ) : (
+              <p className="banner banner-warning">{job.report?.message || 'Completion report is not available yet.'}</p>
+            )}
+            {job.report?.manifestKey && <p className="mono hint">{job.report.manifestKey}</p>}
+            {downloadError && <p className="banner banner-danger" role="alert">{downloadError}</p>}
+            {job.report?.available && (
+              <SecondaryButton busy={downloading} busyLabel="Downloading..." onClick={downloadReport}>
+                Download Report
+              </SecondaryButton>
+            )}
+          </section>
         </div>
-      </main>
-    </div>
+      )}
+
+      <div className="button-row" style={{ marginTop: 16 }}>
+        <SecondaryButton busy={refreshing} disabled={loading && !job} busyLabel="Refreshing..." onClick={refresh}>
+          Refresh status
+        </SecondaryButton>
+        <Link to="/batch-job" className="btn btn-secondary">Back to Batch Job</Link>
+        <Link to="/jobs" className="btn btn-secondary">Job History</Link>
+      </div>
+    </>
   );
 }
 
-function ResultRow({ row, requestedTags }) {
+function ResultStatus({ row }) {
   const succeeded = row.taskStatus === 'succeeded';
   return (
-    <tr className={`border-t border-slate-100 ${succeeded ? '' : 'bg-red-50'}`}>
-      <td className="px-4 py-3 font-mono text-xs">{row.key}</td>
-      <td className="px-4 py-3">
-        {succeeded ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 ring-inset">
-            <Check className="h-3.5 w-3.5" aria-hidden="true" />
-            SUCCESS
-          </span>
-        ) : (
-          <div>
-            <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-800 ring-1 ring-red-200 ring-inset">
-              <X className="h-3.5 w-3.5" aria-hidden="true" />
-              FAILED
-            </span>
-            {row.errorCode && <p className="mt-1 text-xs text-red-800">{row.errorCode}</p>}
-          </div>
-        )}
-      </td>
-      <td className="px-4 py-3 text-slate-700">{row.httpStatusCode || '—'}</td>
-      <td className="px-4 py-3 text-slate-700">
-        {succeeded ? (
-          <div>
-            <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">Actual S3 Tags</p>
-            <p className="mt-1">{row.actualTagsRetrieved ? formatTags(row.actualTags) : row.actualTagsMessage || '—'}</p>
-            <p className="mt-2 text-xs text-slate-500">Requested: {formatTags(requestedTags)}</p>
-          </div>
-        ) : (
-          <p className="text-xs text-slate-500">Requested: {formatTags(requestedTags)}</p>
-        )}
-      </td>
-      <td className="px-4 py-3 text-slate-700">
-        {succeeded ? row.resultMessage || 'Successful' : row.resultMessage || 'Failed'}
-      </td>
-    </tr>
-  );
-}
-
-function Card({ label, value, tone = 'neutral' }) {
-  const toneClass =
-    tone === 'success' ? 'border-emerald-200 bg-emerald-50' : tone === 'failure' ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-white';
-  return (
-    <div className={`rounded-xl border px-4 py-3 shadow-sm ${toneClass}`}>
-      <p className="text-xs text-slate-500">{label}</p>
-      <p className="mt-1 text-2xl font-semibold">{value}</p>
+    <div>
+      <StatusBadge status={succeeded ? 'succeeded' : 'failed'} />
+      {!succeeded && row.errorCode && <p className="hint">{row.errorCode}</p>}
     </div>
   );
 }
 
-function Field({ label, value, mono = false }) {
-  return (
-    <div className="rounded-xl border border-slate-200 px-4 py-3">
-      <dt className="text-xs text-slate-500">{label}</dt>
-      <dd className={`mt-1 text-sm text-slate-900 ${mono ? 'font-mono break-all' : ''}`}>{value}</dd>
-    </div>
-  );
+function ActualTags({ row }) {
+  if (row.taskStatus !== 'succeeded') return <span className="muted">—</span>;
+  if (row.actualTagsRetrieved) return <TagBadge tags={row.actualTags} empty="—" />;
+  return <span className="muted">{row.actualTagsMessage || '—'}</span>;
 }
