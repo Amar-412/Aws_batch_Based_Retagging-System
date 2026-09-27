@@ -15,6 +15,9 @@ import { toAwsApiError } from '../utils/awsError.js';
 import { validateTagMap } from '../utils/ruleValidator.js';
 import { buildManifestCsv, manifestObjectKey, uploadManifest } from './manifest.service.js';
 import { findCompletedWorkflow, getRecord, putRecord, workflowRecordId } from './job.service.js';
+import { loadCompletionReport, resultsToCsv } from './report.service.js';
+
+const TERMINAL_JOB_STATUSES = new Set(['Complete', 'Failed', 'Cancelled', 'Canceled']);
 
 const WORKFLOW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ROLE_ARN = /^arn:aws[a-zA-Z-]*:iam::(\d{12}):role\/.+/;
@@ -332,6 +335,16 @@ function toStatusResponse(item, job) {
     tags: item.tags,
     manifestKey: item.manifestKey,
     createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+}
+
+function emptyResultSummary(progress) {
+  return {
+    total: progress?.numberOfTasksTotal ?? 0,
+    succeeded: progress?.numberOfTasksSucceeded ?? 0,
+    failed: progress?.numberOfTasksFailed ?? 0,
+    fromReport: false,
   };
 }
 
@@ -369,11 +382,64 @@ export async function getBatchJobStatus(jobId, options = {}) {
     });
   }
 
+  const progress = described.Job?.ProgressSummary;
   const updated = {
     ...item,
     status: described.Job?.Status || item.status,
     updatedAt: new Date().toISOString(),
+    ...(progress
+      ? {
+          tasksSucceeded: progress.NumberOfTasksSucceeded ?? item.tasksSucceeded ?? 0,
+          tasksFailed: progress.NumberOfTasksFailed ?? item.tasksFailed ?? 0,
+        }
+      : {}),
   };
   await putRecord(updated, deps.dynamo, deps.tableName);
-  return toStatusResponse(updated, described.Job);
+
+  const status = toStatusResponse(updated, described.Job);
+  if (!TERMINAL_JOB_STATUSES.has(status.status)) {
+    return {
+      ...status,
+      report: {
+        available: false,
+        malformed: false,
+        manifestKey: null,
+        files: [],
+        message: 'The completion report is available after the job finishes.',
+      },
+      results: [],
+      resultSummary: emptyResultSummary(status.progressSummary),
+    };
+  }
+
+  const describedPrefix = described.Job?.Report?.Prefix;
+  const reportPrefix = typeof describedPrefix === 'string' ? describedPrefix : item.reportPrefix || deps.reportPrefix;
+
+  const completion = await loadCompletionReport({
+    s3Client: deps.s3Client,
+    bucket: item.bucket,
+    reportPrefix,
+    jobId,
+    includeActualTags: true,
+  });
+
+  return {
+    ...status,
+    ...completion,
+    resultSummary: completion.report.available ? completion.resultSummary : emptyResultSummary(status.progressSummary),
+  };
+}
+
+/**
+ * Download a CSV of parsed task results. Does not create a job.
+ */
+export async function getBatchJobReportCsv(jobId, options = {}) {
+  const status = await getBatchJobStatus(jobId, options);
+  if (!status.report?.available) {
+    throw new ApiError(404, status.report?.message || 'The completion report is not available.', undefined, 'REPORT_NOT_AVAILABLE');
+  }
+  return {
+    fileName: `batch-report-${jobId}.csv`,
+    csv: resultsToCsv(status.results || []),
+  };
 }

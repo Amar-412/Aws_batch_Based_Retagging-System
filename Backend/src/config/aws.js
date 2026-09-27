@@ -37,6 +37,8 @@ let _dynamoDocClient;
  * Amazon S3 client.
  * Object validation sends HeadObjectCommand.
  * Manifest upload sends PutObjectCommand.
+ * Completion reports send GetObjectCommand.
+ * Successful tasks may send GetObjectTaggingCommand. Tagging itself stays on the batch job.
  */
 export function getS3Client() {
   if (!_s3Client) _s3Client = new S3Client(buildClientConfig());

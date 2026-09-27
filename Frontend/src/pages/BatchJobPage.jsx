@@ -134,10 +134,13 @@ export default function BatchJobPage() {
             </button>
           )}
 
-          <div className="mt-6">
+          <div className="mt-6 flex flex-wrap gap-2">
             <Link to="/preview" className={quietButtonClass}>
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
               Back to Preview
+            </Link>
+            <Link to="/jobs" className={quietButtonClass}>
+              Job History
             </Link>
           </div>
         </section>

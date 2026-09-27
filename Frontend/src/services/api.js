@@ -48,9 +48,48 @@ export async function createBatchJobs(plan) {
   return response.data;
 }
 
+export async function listBatchJobs({ status, jobId, limit, cursor } = {}) {
+  const response = await api.get('/batch/jobs', {
+    params: {
+      status: status || undefined,
+      jobId: jobId || undefined,
+      limit,
+      cursor: cursor || undefined,
+    },
+  });
+  return response.data;
+}
+
 export async function getBatchJob(jobId) {
   const response = await api.get(`/batch/${encodeURIComponent(jobId)}`);
   return response.data;
+}
+
+export async function downloadBatchReport(jobId) {
+  let response;
+  try {
+    response = await api.get(`/batch/${encodeURIComponent(jobId)}/report`, {
+      responseType: 'blob',
+    });
+  } catch (err) {
+    if (err.response?.data instanceof Blob) {
+      const text = await err.response.data.text();
+      try {
+        err.response.data = JSON.parse(text);
+      } catch {
+        err.response.data = { message: text };
+      }
+    }
+    throw err;
+  }
+  const url = URL.createObjectURL(response.data);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `batch-report-${jobId}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 export default api;

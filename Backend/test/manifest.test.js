@@ -5,7 +5,7 @@ import { buildManifestCsv, encodeManifestObjectKey, uploadManifest } from '../sr
 
 const bucket = 's3-retagging-866731631203';
 
-test('manifest rows use the bucket ARN and a URL-encoded key', () => {
+test('manifest rows use the bucket name and a URL-encoded key', () => {
   const csv = buildManifestCsv([
     { bucket, key: 'test/atlas-credentials (3).env' },
     { bucket, key: 'test/atlas-credentials (4).env' },
@@ -14,11 +14,12 @@ test('manifest rows use the bucket ARN and a URL-encoded key', () => {
   assert.equal(
     csv,
     [
-      'arn:aws:s3:::s3-retagging-866731631203,test/atlas-credentials%20(3).env',
-      'arn:aws:s3:::s3-retagging-866731631203,test/atlas-credentials%20(4).env',
+      's3-retagging-866731631203,test/atlas-credentials%20(3).env',
+      's3-retagging-866731631203,test/atlas-credentials%20(4).env',
       '',
     ].join('\n')
   );
+  assert.equal(csv.includes('arn:aws:s3:::'), false);
   assert.equal(csv.includes('environment'), false);
   assert.equal(csv.includes('SET_TAG'), false);
 });
@@ -27,7 +28,7 @@ test('special characters in object keys are encoded without hiding the path', ()
   assert.equal(encodeManifestObjectKey('test/atlas-credentials (3).env'), 'test/atlas-credentials%20(3).env');
 
   const csv = buildManifestCsv([{ bucket, key: 'folder/a,b "quote".txt' }]);
-  assert.equal(csv, 'arn:aws:s3:::s3-retagging-866731631203,"folder/a,b%20%22quote%22.txt"\n');
+  assert.equal(csv, 's3-retagging-866731631203,"folder/a,b%20%22quote%22.txt"\n');
 });
 
 test('manifest upload uses PutObject and keeps the response ETag', async () => {

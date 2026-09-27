@@ -182,7 +182,9 @@ An empty object list returns `400` `INVALID_OBJECTS`. An empty rule list returns
 
 The job operation is `S3PutObjectTagging`. The backend does not call `PutObjectTagging` on each object. `ConfirmationRequired` is false because the application already required an explicit preview confirmation before this call. The job is not created until the user clicks **Create Batch Operations Job**.
 
-`GET /api/batch/:jobId` calls `DescribeJob` and updates the stored status. Job creation is not task completion.
+`GET /api/batch/:jobId` calls `DescribeJob` and updates the stored status. Job creation is not task completion. When the job is `Complete`, `Failed`, or `Cancelled`, the response also includes object results parsed from the completion report under `reportPrefix/job-<jobId>/manifest.json`. Each result has `bucket`, `key`, `taskStatus`, `httpStatusCode`, `errorCode`, and `resultMessage`. URL-encoded keys are decoded. Successful tasks include `actualTags` from `GetObjectTagging`. Requested tags remain on the job and are not treated as proof of success. A missing or malformed report is returned on the job status instead of failing the request. `GET /api/batch/:jobId/report` downloads the parsed results as CSV.
+
+`GET /api/batch/jobs` lists stored jobs. Query parameters are `status` (`NEW`, `ACTIVE`, `COMPLETE`, `FAILED`, `CANCELLED`), `jobId` (contains match), `limit` (1–100, default 20), and `cursor`. The cursor is the previous page's `nextCursor`. This route only reads DynamoDB. It does not create a job or read or write S3 objects. Workflow index records are omitted.
 
 Conflicts return `400 RETAGGING_CONFLICT` and create no jobs. A missing `BATCH_OPERATIONS_ROLE_ARN` returns `400 BATCH_ROLE_NOT_CONFIGURED`.
 
@@ -203,7 +205,7 @@ Backend caller:
 - `s3:PutObject` on `arn:aws:s3:::<bucket>/manifests/*`
 - `s3:CreateJob` and `s3:DescribeJob` on `arn:aws:s3:<region>:<account>:job/*`
 - `iam:PassRole` on the Batch Operations role ARN
-- `dynamodb:GetItem` and `dynamodb:PutItem` on the `RetaggingJobs` table
+- `dynamodb:GetItem`, `dynamodb:PutItem`, and `dynamodb:Scan` on the `RetaggingJobs` table
 
 Batch Operations role (`BATCH_OPERATIONS_ROLE_ARN`), trusted by `batchoperations.s3.amazonaws.com`:
 
