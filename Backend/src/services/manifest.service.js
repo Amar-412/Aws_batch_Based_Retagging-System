@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // S3 Batch Operations CSV manifests.
-// A manifest lists bucket ARN + object key only. Tag values belong in the
-// CreateJob operation, not in this file.
+// A manifest lists bucket name + URL-encoded object key only.
+// Tag values belong in the CreateJob operation, not in this file.
 // ---------------------------------------------------------------------------
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import ApiError from '../utils/ApiError.js';
@@ -40,13 +40,12 @@ function csvField(value) {
  */
 export function buildManifestCsv(objects) {
   const rows = objects.map((object) => {
-    const bucketArn = `arn:aws:s3:::${object.bucket}`;
     const encodedKey = csvField(encodeManifestObjectKey(object.key));
-    return `${bucketArn},${encodedKey}`;
+    return `${object.bucket},${encodedKey}`;
   });
+
   return `${rows.join('\n')}\n`;
 }
-
 /**
  * Manifest object key under the configured prefix.
  * One tag group uses manifests/<workflowId>.csv.

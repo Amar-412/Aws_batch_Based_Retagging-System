@@ -13,7 +13,22 @@ export function toAwsApiError(err, fallback) {
   const http = err?.$metadata?.httpStatusCode;
 
   if (name === 'AccessDenied' || name === 'AccessDeniedException' || http === 403) {
-    return new ApiError(403, 'AWS permission denied for the requested operation.', undefined, 'AWS_ACCESS_DENIED');
+    console.error('[AWS ACCESS DENIED]', {
+      name: err?.name,
+      message: err?.message,
+      code: err?.Code,
+      httpStatus: http,
+      requestId: err?.$metadata?.requestId,
+      extendedRequestId: err?.$metadata?.extendedRequestId
+    });
+    console.log(err.message)
+  
+    return new ApiError(
+      403,
+      err?.message || 'AWS permission denied for the requested operation.',
+      undefined,
+      'AWS_ACCESS_DENIED'
+    );
   }
 
   if (name === 'NoSuchBucket') {
